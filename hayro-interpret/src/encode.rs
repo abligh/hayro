@@ -185,6 +185,35 @@ impl EncodedShadingPattern {
 }
 
 impl ShadingPattern {
+    /// Encode the shading pattern with its one color component in place
+    /// of its color: each sample's red, green and blue are that component
+    /// as the shading's functions give it, from 0 to 1, before its color
+    /// space or a transfer function would convert it (a `Separation`'s
+    /// tint, say, or an `Indexed` space's index over its range), for a
+    /// caller drawing it in an ink of its own. Its alpha is as
+    /// [`ShadingPattern::encode`]'s. Returns `None` where the color space
+    /// has other than one component.
+    pub fn encode_single_component(&self) -> Option<EncodedShadingPattern> {
+        if self.shading.color_space.num_components() != 1 {
+            return None;
+        }
+
+        let gray = ColorSpace::device_gray();
+        let background_color = self
+            .shading
+            .background
+            .as_ref()
+            .map(|b| gray.to_rgba(b, 1.0))
+            .unwrap_or(AlphaColor::TRANSPARENT);
+
+        Some(EncodedShadingPattern {
+            color_space: gray,
+            background_color,
+            transfer_function: None,
+            ..self.encode()
+        })
+    }
+
     /// Encode the shading pattern.
     pub fn encode(&self) -> EncodedShadingPattern {
         let base_transform;
@@ -553,5 +582,55 @@ fn radial_pos(
         (Some(min), None) => Some(min),
         (None, Some(max)) => Some(max),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::cache::Cache;
+    use crate::pattern::ShadingPattern;
+    use hayro_syntax::Pdf;
+    use hayro_syntax::object::{Dict, ObjectIdentifier};
+    use kurbo::Point;
+
+    /// An axial shading along x from 0 to 1, its tint the x, extended
+    /// both ways, in `color_space`.
+    fn axial(color_space: &str) -> ShadingPattern {
+        let pattern = format!(
+            "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace {color_space} \
+/Coords [0 0 1 0] /Extend [true true] \
+/Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >>"
+        );
+        let data = format!(
+            "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n\
+10 0 obj\n{pattern}\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
+        );
+        let pdf = Pdf::new(data.into_bytes()).unwrap();
+        let dict = pdf
+            .xref()
+            .get::<Dict<'_>>(ObjectIdentifier::new(10, 0))
+            .unwrap();
+
+        ShadingPattern::new(&dict, &Cache::new()).unwrap()
+    }
+
+    const GOLD: &str = "[/Separation /Gold /DeviceCMYK \
+<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 0.4 1 0] /N 1 >>]";
+
+    #[test]
+    fn a_single_component_is_sampled_as_gray_before_its_color_space() {
+        let pattern = axial(GOLD);
+        let tint = pattern.encode_single_component().unwrap();
+        let [r, g, b, a] = tint.sample(Point::new(0.25, 0.0));
+        assert!((r - 0.25).abs() < 0.01, "{r}");
+        assert_eq!((r, r, 1.0), (g, b, a));
+        let [r, g, b, _] = pattern.encode().sample(Point::new(0.25, 0.0));
+        assert!(r > g && g > b, "the alternate's orange: {r} {g} {b}");
+    }
+
+    #[test]
+    fn a_space_of_several_components_has_no_single_component() {
+        assert!(axial("/DeviceRGB").encode_single_component().is_none());
     }
 }
