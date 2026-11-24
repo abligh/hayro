@@ -244,12 +244,11 @@ fn eval_inner(procedure: &[PostScriptOp], arg_stack: &mut InterpreterStack) -> O
                 one_f!(|n: f32| n.floor());
             }
             PostScriptOp::Idiv => {
-                two_f!(|n1: f32, n2: f32| {
-                    let n1 = n1 as i32;
-                    let n2 = n2 as i32;
-
-                    (n1 / n2) as f32
-                });
+                let n2 = arg_stack.pop()?.as_f32() as i32;
+                let n1 = arg_stack.pop()?.as_f32() as i32;
+                // By zero, or of the least integer by -1, it is an error.
+                let quotient = n1.checked_div(n2)?;
+                arg_stack.push(Argument::Float(quotient as f32))?;
             }
             PostScriptOp::Ln => {
                 one_f!(|n: f32| n.ln());
@@ -289,11 +288,14 @@ fn eval_inner(procedure: &[PostScriptOp], arg_stack: &mut InterpreterStack) -> O
                     let num = n1 as u32;
                     let shift = n2 as i32;
 
-                    if shift >= 0 {
-                        (num << shift) as f32
+                    // By 32 bits or more, none are left.
+                    let by = shift.unsigned_abs();
+                    let shifted = if shift >= 0 {
+                        num.checked_shl(by)
                     } else {
-                        (num >> -shift) as f32
-                    }
+                        num.checked_shr(by)
+                    };
+                    shifted.unwrap_or(0) as f32
                 });
             }
             PostScriptOp::Eq => {
@@ -399,7 +401,7 @@ fn eval_inner(procedure: &[PostScriptOp], arg_stack: &mut InterpreterStack) -> O
                     let shift = j as usize % target.len();
                     target.rotate_right(shift);
                 } else {
-                    let shift = (-j) as usize % target.len();
+                    let shift = j.unsigned_abs() as usize % target.len();
                     target.rotate_left(shift);
                 }
             }
@@ -669,6 +671,10 @@ mod tests {
         op_impl("3 2 idiv", &[1.0]);
         op_impl("4 2 idiv", &[2.0]);
         op_impl("-5 2 idiv", &[-2.0]);
+        for error in ["1 0 idiv", "1 0.5 idiv", "-2147483648 -1 idiv"] {
+            let program = parse_procedure(format!("{{{error}}}").as_bytes()).unwrap();
+            assert!(Type4 { program }.run(&[]).is_none(), "{error}");
+        }
     }
 
     #[test]
@@ -750,6 +756,9 @@ mod tests {
     fn op_bitshift() {
         op_impl("7 3 bitshift", &[56.0]);
         op_impl("142 -3 bitshift", &[17.0]);
+        op_impl("7 32 bitshift", &[0.0]);
+        op_impl("7 -32 bitshift", &[0.0]);
+        op_impl("7 -2147483648 bitshift", &[0.0]);
     }
 
     #[test]
@@ -870,6 +879,7 @@ mod tests {
         op_impl("1 2 3 3 0 roll", &[1.0, 2.0, 3.0]);
         op_impl("1 2 3 3 5 roll", &[2.0, 3.0, 1.0]);
         op_impl("0 2 roll", &[]);
+        op_impl("1 2 3 3 -2147483648 roll", &[3.0, 1.0, 2.0]);
         op_impl(
             "1 2 3 4 5 6 7 5 2 roll",
             &[1.0, 2.0, 6.0, 7.0, 3.0, 4.0, 5.0],
