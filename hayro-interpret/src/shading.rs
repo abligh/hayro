@@ -845,6 +845,12 @@ fn read_lattice_triangles(
     vertices_per_row: u32,
     decode: &[f32],
 ) -> Option<(Vec<Triangle>, Option<kurbo::Rect>)> {
+    // A lattice needs at least two vertices per row (PDF 32000-1, table 84).
+    // With none, the loop below would never read past the data's end.
+    if vertices_per_row < 2 {
+        return None;
+    }
+
     let mut lattices = vec![];
     let mut bounds = None;
 
@@ -1113,4 +1119,21 @@ fn points_bbox(points: &[Point]) -> kurbo::Rect {
         .fold(kurbo::Rect::from_points(points[0], points[0]), |bbox, p| {
             bbox.union_pt(*p)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_lattice_triangles;
+
+    #[test]
+    fn a_lattice_needs_two_vertices_per_row() {
+        // Four vertices of 8-bit x, y and gray.
+        let data = [0, 0, 0, 255, 0, 85, 0, 255, 170, 255, 255, 255];
+        let decode = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
+        let read = |per_row| read_lattice_triangles(&data, 8, 8, false, per_row, &decode);
+
+        assert!(read(0).is_none());
+        assert!(read(1).is_none());
+        assert_eq!(read(2).unwrap().0.len(), 2);
+    }
 }
