@@ -25,6 +25,24 @@ pub trait Device<'a> {
         mask: Option<SoftMask<'a>>,
         blend_mode: BlendMode,
     );
+    /// Push a new transparency group to the blend stack, as
+    /// [`Device::push_transparency_group`] does, with its group
+    /// dictionary's flags: `isolated` (`/I`) and `knockout` (`/K`),
+    /// each `false` where the dictionary leaves it out.
+    ///
+    /// By default the flags are dropped and the group is pushed by
+    /// [`Device::push_transparency_group`].
+    fn push_transparency_group_with_flags(
+        &mut self,
+        opacity: f32,
+        mask: Option<SoftMask<'a>>,
+        blend_mode: BlendMode,
+        isolated: bool,
+        knockout: bool,
+    ) {
+        let _ = (isolated, knockout);
+        self.push_transparency_group(opacity, mask, blend_mode);
+    }
     /// Draw a run of positioned glyphs.
     fn draw_glyph_run(
         &mut self,

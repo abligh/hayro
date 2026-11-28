@@ -15,6 +15,8 @@ pub(crate) struct FormXObject<'a> {
     pub(crate) matrix: Affine,
     pub(crate) bbox: [f32; 4],
     is_transparency_group: bool,
+    /// The group dictionary's `/I` and `/K`, `false` where left out.
+    group_flags: (bool, bool),
     pub(crate) dict: Dict<'a>,
     pub(crate) resources: Option<Resources<'a>>,
 }
@@ -31,12 +33,21 @@ impl<'a> FormXObject<'a> {
                 .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
         );
         let bbox = dict.get::<[f32; 4]>(BBOX)?;
-        let is_transparency_group = dict.get::<Dict<'_>>(GROUP).is_some();
+        let group = dict.get::<Dict<'_>>(GROUP);
+        let is_transparency_group = group.is_some();
+        let flag = |key| {
+            group
+                .as_ref()
+                .and_then(|g| g.get::<bool>(key))
+                .unwrap_or(false)
+        };
+        let group_flags = (flag(I), flag(K));
 
         Some(Self {
             decoded,
             matrix,
             is_transparency_group,
+            group_flags,
             bbox,
             dict: dict.clone(),
             resources,
@@ -74,10 +85,13 @@ impl<'a> FormXObject<'a> {
         context.push_root_transform();
 
         if self.is_transparency_group {
-            device.push_transparency_group(
+            let (isolated, knockout) = self.group_flags;
+            device.push_transparency_group_with_flags(
                 context.fill_paint().alpha,
                 std::mem::take(&mut context.compositing_mut().soft_mask),
                 std::mem::take(&mut context.compositing_mut().blend_mode),
+                isolated,
+                knockout,
             );
 
             context.fill_paint_mut().alpha = 1.0;
